@@ -17,12 +17,12 @@ pub enum IfAction {
 
 #[derive(Debug, PartialEq)]
 pub struct IfEvent {
-    ifaction: IfAction,
-    ifname: String,
-    ifindex: u32,
-    ifflags: InterfaceFlags,
-    ip: IpAddr,
-    plen: u8,
+    pub ifaction: IfAction,
+    pub ifname: String,
+    pub ifindex: u32,
+    pub ifflags: InterfaceFlags,
+    pub ip: IpAddr,
+    pub plen: u8,
 }
 
 impl IfEvent {
