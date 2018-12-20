@@ -1,0 +1,27 @@
+[package]
+name = "interface-events"
+version = "0.1.0"
+authors = ["Tom Pusateri <pusateri@bangj.com>"]
+repository = "https://github.com/pusateri/interface-events"
+license = "MIT"
+edition = "2024"
+
+[lib]
+name = "interface_events"
+path = "src/lib.rs"
+
+[[bin]]
+name = "monitor"
+path = "src/bin.rs"
+
+[dependencies]
+byteorder = "1"
+crossbeam-channel = "0.5"
+ipnetwork = "0.21"
+libc = "0.2"
+log = "0.4"
+mio = { version = "1.0", features = ["os-ext", "net"] }
+nix = { version="0.30", features = ["net", "socket"] }
+pretty_env_logger = "0.5"
+socket2 = { version = "0.6", features = ["all"] }
+thiserror = "2"
