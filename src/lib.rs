@@ -109,16 +109,14 @@ pub fn get_current_events() -> Vec<IfEvent> {
             }
         };
         let if_index = if_nametoindex(&ifaddr.interface_name[..]).unwrap();
-        if ifaddr.flags.contains(InterfaceFlags::IFF_UP) {
-            events.push(IfEvent::new(
-                IfAction::NEWADDR,
-                ifaddr.interface_name,
-                if_index,
-                ifaddr.flags,
-                ip,
-                plen,
-            ));
-        }
+        events.push(IfEvent::new(
+            IfAction::NEWADDR,
+            ifaddr.interface_name,
+            if_index,
+            ifaddr.flags,
+            ip,
+            plen,
+        ));
     }
     events
 }
