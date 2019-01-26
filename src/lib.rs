@@ -22,6 +22,7 @@ pub struct IfEvent {
     pub ifindex: u32,
     pub ifflags: InterfaceFlags,
     pub ip: IpAddr,
+    pub ipnet: IpAddr,
     pub plen: u8,
 }
 
@@ -32,6 +33,7 @@ impl IfEvent {
         idx: u32,
         flags: InterfaceFlags,
         addr: IpAddr,
+        net: IpAddr,
         len: u8,
     ) -> IfEvent {
         IfEvent {
@@ -40,6 +42,7 @@ impl IfEvent {
             ifindex: idx,
             ifflags: flags,
             ip: addr,
+            ipnet: net,
             plen: len,
         }
     }
@@ -83,7 +86,7 @@ impl IfController {
 	}
 }
 
-fn ifaddr_to_prefix(ifaddr: ifaddrs::InterfaceAddress) -> Option<ipnetwork::IpNetwork> {
+fn ifaddr_to_prefix(ifaddr: ifaddrs::InterfaceAddress) -> Option<(IpAddr, IpAddr, u8)> {
     let ip = addrs::sockaddr_to_ipaddr(ifaddr.address?)?;
     let mask = addrs::sockaddr_to_ipaddr(ifaddr.netmask?)?;
     let net = addrs::mask_address(ip, mask)?;
@@ -91,10 +94,7 @@ fn ifaddr_to_prefix(ifaddr: ifaddrs::InterfaceAddress) -> Option<ipnetwork::IpNe
         Ok(len) => len,
         Err(_e) => return None,
     };
-    match ipnetwork::IpNetwork::new(net, plen) {
-        Ok(ipnet) => return Some(ipnet),
-        Err(_e) => return None,
-    };
+    Some((ip, net, plen))
 }
 
 /// return events for current interfaces with addresses that are UP
@@ -102,8 +102,8 @@ pub fn get_current_events() -> Vec<IfEvent> {
     let addrs = ifaddrs::getifaddrs().unwrap();
     let mut events: Vec<IfEvent> = Vec::with_capacity(10);
     for ifaddr in addrs {
-        let (ip, plen) = match ifaddr_to_prefix(ifaddr.clone()) {
-            Some(ipnet) => (ipnet.ip(), ipnet.prefix()),
+        let (ip, ipnet, plen) = match ifaddr_to_prefix(ifaddr.clone()) {
+            Some((ip, ipnet, plen)) => (ip, ipnet, plen),
             None => {
                 continue;
             }
@@ -115,6 +115,7 @@ pub fn get_current_events() -> Vec<IfEvent> {
             if_index,
             ifaddr.flags,
             ip,
+            ipnet,
             plen,
         ));
     }
