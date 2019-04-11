@@ -57,11 +57,35 @@ impl IfEvent {
             IpAddr::V6(ip6) => !ip6.is_unicast_link_local(),
         }
 	}
+    pub fn from_ifaddr(ifaddr: &ifaddrs::InterfaceAddress) -> Option<IfEvent>
+    {
+        let (ip, ipnet, plen) = match ifaddr_to_prefix(ifaddr.clone()) {
+                Some((ip, ipnet, plen)) => (ip, ipnet, plen),
+                None => return None,
+        };
+        let if_index = match if_nametoindex(&ifaddr.interface_name[..]) {
+            Ok(idx) => idx,
+            Err(e) => {
+                eprintln!("if_nametoindex: {}", e);
+                return None;
+            },
+        };
+        Some(IfEvent::new(
+            IfAction::NEWADDR,
+            ifaddr.interface_name.clone(),
+            if_index,
+            ifaddr.flags,
+            ip,
+            ipnet,
+            plen,
+        ))
+    }
 }
 
 pub struct IfController {
 	tx: Sender<IfEvent>,
 	rx: Receiver<IfEvent>,
+    running: bool,
 }
 
 impl IfController {
@@ -70,6 +94,7 @@ impl IfController {
 		let controller = IfController {
 			tx: s,
 			rx: r,
+            running: false,
 		};
 		// TODO: adding routing socket support here to listen and generate events
 		controller
@@ -77,7 +102,12 @@ impl IfController {
 
 	/// subscribe to future interfaces events
 	pub fn subscribe(self) -> Receiver<IfEvent> {
-		self.rx.clone()
+        let rx = self.rx.clone();
+        catchup(&self.tx);
+        if !self.running {
+            run(&self.tx);
+        }
+		rx
 	}
 
 	/// unsubscribe to future interfaces events
@@ -102,27 +132,26 @@ pub fn get_current_events() -> Vec<IfEvent> {
     let addrs = ifaddrs::getifaddrs().unwrap();
     let mut events: Vec<IfEvent> = Vec::with_capacity(10);
     for ifaddr in addrs {
-        let (ip, ipnet, plen) = match ifaddr_to_prefix(ifaddr.clone()) {
-            Some((ip, ipnet, plen)) => (ip, ipnet, plen),
-            None => {
-                continue;
-            }
-        };
-        let if_index = if_nametoindex(&ifaddr.interface_name[..]).unwrap();
-        events.push(IfEvent::new(
-            IfAction::NEWADDR,
-            ifaddr.interface_name,
-            if_index,
-            ifaddr.flags,
-            ip,
-            ipnet,
-            plen,
-        ));
+        if let Some(event) = IfEvent::from_ifaddr(&ifaddr) {
+            events.push(event);
+        }
     }
     events
 }
 
+fn run(_tx: &Sender<IfEvent>) {
+        // future rtsock events
+}
 
+fn catchup(tx: &Sender<IfEvent>) {
+    let events = get_current_events()
+        .into_iter()
+        .filter(|event| IfEvent::not_link_local(event))
+        .filter(|event| IfEvent::not_loopback(event));
+    for event in events {
+        tx.send(event).unwrap();
+    }
+}
 
 #[cfg(test)]
 mod tests {
