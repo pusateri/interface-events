@@ -11,6 +11,10 @@ name = "interface_events"
 path = "src/lib.rs"
 
 [dependencies]
+libc = "0.2"
 nix = { git = "https://github.com/nix-rust/nix.git" }
 crossbeam-channel = "^0.3"
 ipnetwork = ">= 0.13"
+socket2 = { version = "0.3", features = ["reuseport"] }
+mio = "^0.6"
+bytes = "0.4"
