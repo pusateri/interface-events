@@ -5,16 +5,18 @@ use std::io::Read;
 use std::thread;
 use socket2::{Domain, Socket, Type};
 use std::os::unix::io::AsRawFd;
-use libc::{AF_ROUTE, RTM_VERSION, RTM_ADD, RTM_DELETE, RTM_IFINFO, RTM_NEWADDR, RTM_DELADDR, RTM_NEWMADDR, RTM_DELMADDR};
+use libc::{AF_ROUTE, AF_INET, AF_INET6};
+use libc::{RTM_VERSION, RTM_ADD, RTM_DELETE, RTM_IFINFO, RTM_NEWADDR, RTM_DELADDR, RTM_NEWMADDR, RTM_DELMADDR};
+use libc::{RTA_NETMASK, RTA_IFP, RTA_IFA};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use ipnetwork;
 use nix::ifaddrs;
 use nix::net::if_::*;
 use std::net::IpAddr;
-use mio::event::Evented;
-use mio::unix::EventedFd;
-use mio::{Events, Ready, Poll, PollOpt, Token};
-use bytes::{IntoBuf, BytesMut, Buf};
+use mio::event::Source;
+use mio::unix::SourceFd;
+use mio::{Events, Interest, Registry, Poll, Token};
+use bytes::{BytesMut, Buf};
 
 mod addrs;
 
@@ -100,8 +102,7 @@ pub struct IfController {
     running: bool,
 }
 
-pub fn rtsock_parse(bytes: &BytesMut) {
-    let mut buf = bytes.into_buf();
+pub fn rtsock_parse(buf: &mut BytesMut) {
     let rtm_msglen = buf.get_u16_le();
     let remain = buf.remaining() as u16;
     if rtm_msglen - 2 != remain {
@@ -115,16 +116,30 @@ pub fn rtsock_parse(bytes: &BytesMut) {
     }
     let rtm_type = buf.get_u8() as i32;
     match rtm_type {
-        RTM_ADD => (),
-        RTM_DELETE => (),
-        RTM_IFINFO => (),
+        RTM_ADD => println!("RTM_ADD"),
+        RTM_DELETE => println!("RTM_DELETE"),
+        RTM_IFINFO => println!("RTM_IFINFO"),
         RTM_NEWADDR => {
                 let ifam_addrs = buf.get_i32_le();
                 let ifam_flags = buf.get_i32_le();
                 let ifam_index = buf.get_u16_le();
-                buf.advance(2);
                 let _ifam_metric = buf.get_i32_le();
                 println!("newaddr: addrs: {}, flags: {}, index: {}", ifam_addrs, ifam_flags, ifam_index);
+                if ifam_addrs & RTA_NETMASK != 0 {
+                    let sa_len = buf.get_u8() as i32;
+                    let sa_family = buf.get_u8() as i32;
+                    match sa_family {
+                        AF_INET => println!("len {}, netmask AF_INET", sa_len),
+                        AF_INET6 => println!("len {}, netmask AF_INET6", sa_len),
+                        _ => println!("len {}, netmask family other", sa_len)
+                    };
+                }
+                if ifam_addrs & RTA_IFP != 0 {
+
+                }
+                if ifam_addrs & RTA_IFA != 0 {
+                    
+                }
             },
         RTM_DELADDR => println!("DELADDR"),
         RTM_NEWMADDR => println!("NEW MADDR"),
@@ -135,7 +150,7 @@ pub fn rtsock_parse(bytes: &BytesMut) {
 
 impl IfController {
 	pub fn new() -> Self {
-        let sock = Socket::new(Domain::from(AF_ROUTE), Type::raw(), None).expect("raw routing socket");
+        let sock = Socket::new_raw(Domain::from(AF_ROUTE), Type::RAW, None).expect("raw routing socket");
         sock.set_nonblocking(true).expect("nonblocking Error");
 		let (s, r) = unbounded::<IfEvent>();
 		let controller = IfController {
@@ -168,10 +183,9 @@ impl IfController {
         thread::spawn(move || {
             const RT_TOKEN: Token = Token(0);
             let mut events = Events::with_capacity(1024);
-            let poll = Poll::new().expect("Poll::new() failed");
-            //let mut buf = BytesMut::with_capacity(4096);
+            let mut poll = Poll::new().expect("Poll::new() failed");
             let mut buffer = [0u8; 1024];
-            poll.register(&self, RT_TOKEN, Ready::readable(), PollOpt::level()).expect("poll.register failed");
+            poll.registry().register(&mut self, RT_TOKEN, Interest::READABLE).expect("poll.register failed");
             loop {
                 poll.poll(&mut events, None).expect("poll.poll failed");
                 for event in events.iter() {
@@ -181,7 +195,8 @@ impl IfController {
                                 Ok(n) => {
                                     let mut bytes = BytesMut::from(buffer.as_ref());
                                     bytes.truncate(n);
-                                    rtsock_parse(&bytes);
+                                    println!("received");
+                                    rtsock_parse(&mut bytes);
                                 },
                                 Err(e) => eprintln!("read rtsock: {}", e),
                             }
@@ -194,17 +209,22 @@ impl IfController {
     }
 }
 
-impl Evented for IfController {
-    fn register(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
-        poll.register(&EventedFd(&self.raw.as_raw_fd()), token, interest, opts)
+impl Source for IfController {
+    fn register(&mut self, registry: &Registry, token: Token, interests: Interest)
+        -> io::Result<()>
+    {
+        SourceFd(&self.raw.as_raw_fd()).register(registry, token, interests)
     }
 
-    fn reregister(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
-        poll.reregister(&EventedFd(&self.raw.as_raw_fd()), token, interest, opts)
+    fn reregister(&mut self, registry: &Registry, token: Token, interests: Interest)
+        -> io::Result<()>
+    {
+        SourceFd(&self.raw.as_raw_fd()).reregister(registry, token, interests)
     }
 
-    fn deregister(&self, poll: &Poll) -> io::Result<()> {
-        poll.deregister(self)
+    fn deregister(&mut self, registry: &Registry) -> io::Result<()>
+    {
+        SourceFd(&self.raw.as_raw_fd()).deregister(registry)
     }
 }
 
@@ -244,21 +264,21 @@ fn catchup(tx: &Sender<IfEvent>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+/*
     #[test]
     fn active() {
         let events = get_current_events()
-        	.into_iter()
-        	.filter(|event| IfEvent::not_link_local(event))
-        	.filter(|event| IfEvent::not_loopback(event));
+            .into_iter()
+            .filter(|event| IfEvent::not_link_local(event))
+            .filter(|event| IfEvent::not_loopback(event));
         assert!(events.count() > 0);
     }
-
+*/
     #[test]
     fn subscribe_test() {
         let ifc = IfController::new();
         let if_rx = ifc.subscribe();
-        for event in if_rx.iter() {
+        for _event in if_rx.iter() {
             println!("got if event");
         }
     }
