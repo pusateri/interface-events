@@ -1,13 +1,14 @@
 #![feature(ip)]
-
+#![feature(cursor_remaining)]
 use std::io;
+use std::io::Cursor;
 use std::io::Read;
 use std::thread;
 use socket2::{Domain, Socket, Type};
 use std::os::unix::io::AsRawFd;
 use libc::{AF_ROUTE, AF_INET, AF_INET6};
 use libc::{RTM_VERSION, RTM_ADD, RTM_DELETE, RTM_IFINFO, RTM_NEWADDR, RTM_DELADDR, RTM_NEWMADDR, RTM_DELMADDR};
-use libc::{RTA_NETMASK, RTA_IFP, RTA_IFA};
+use libc::{RTA_NETMASK, RTA_IFP, RTA_IFA, RTAX_MAX};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use ipnetwork;
 use nix::ifaddrs;
@@ -16,7 +17,7 @@ use std::net::IpAddr;
 use mio::event::Source;
 use mio::unix::SourceFd;
 use mio::{Events, Interest, Registry, Poll, Token};
-use bytes::{BytesMut, Buf};
+use byteorder::{NativeEndian, ReadBytesExt};
 
 mod addrs;
 
@@ -102,45 +103,55 @@ pub struct IfController {
     running: bool,
 }
 
-pub fn rtsock_parse(buf: &mut BytesMut) {
-    let rtm_msglen = buf.get_u16_le();
-    let remain = buf.remaining() as u16;
-    if rtm_msglen - 2 != remain {
-        eprintln!("rtsock short buffer. expected {}, got {}", rtm_msglen, remain);
+pub fn rtsock_parse(buf: &[u8], len: usize) {
+    let mut rdr = Cursor::new(buf);
+    let rtm_msglen = rdr.read_u16::<NativeEndian>().unwrap();
+    if len != rtm_msglen.into() {
+        eprintln!("rtsock short buffer. expected {}, got {}", rtm_msglen, len);
         return;
     }
-    let rtm_version = buf.get_u8() as i32;
+    let rtm_version = rdr.read_u8().unwrap() as i32;
     if rtm_version != RTM_VERSION {
         eprintln!("rtsock unsupported version expected {}, got {}", RTM_VERSION, rtm_version);
         return;
     }
-    let rtm_type = buf.get_u8() as i32;
+
+    let rtm_type = rdr.read_u8().unwrap() as i32;
     match rtm_type {
         RTM_ADD => println!("RTM_ADD"),
         RTM_DELETE => println!("RTM_DELETE"),
-        RTM_IFINFO => println!("RTM_IFINFO"),
+        RTM_IFINFO => {
+            let ifm_addrs = rdr.read_u32::<NativeEndian>().unwrap();
+            let ifm_flags = rdr.read_u32::<NativeEndian>().unwrap();
+            let ifm_index = rdr.read_u16::<NativeEndian>().unwrap();
+            let _ifm_spare1 = rdr.read_u16::<NativeEndian>().unwrap();
+            for i in 0..RTAX_MAX {
+                if ifm_addrs & (1 << i) != 0 {
+                    let sa_len = rdr.read_u8().unwrap() as usize;
+                    rdr.set_position(rdr.position() - 1);
+                    let mut rti_info = vec![0u8; sa_len];
+                    rdr.read_exact(&mut rti_info).unwrap();
+                    println!("sockaddr: {:?}", &rti_info);
+                }
+            }
+            println!("IFINFO: addrs: {}, flags: {:#x}, index: {}, empty: {:?}", ifm_addrs, ifm_flags, ifm_index, rdr.is_empty());
+        },
         RTM_NEWADDR => {
-                let ifam_addrs = buf.get_i32_le();
-                let ifam_flags = buf.get_i32_le();
-                let ifam_index = buf.get_u16_le();
-                let _ifam_metric = buf.get_i32_le();
-                println!("newaddr: addrs: {}, flags: {}, index: {}", ifam_addrs, ifam_flags, ifam_index);
-                if ifam_addrs & RTA_NETMASK != 0 {
-                    let sa_len = buf.get_u8() as i32;
-                    let sa_family = buf.get_u8() as i32;
-                    match sa_family {
-                        AF_INET => println!("len {}, netmask AF_INET", sa_len),
-                        AF_INET6 => println!("len {}, netmask AF_INET6", sa_len),
-                        _ => println!("len {}, netmask family other", sa_len)
-                    };
+            let ifam_addrs = rdr.read_u32::<NativeEndian>().unwrap();
+            let ifam_flags = rdr.read_u32::<NativeEndian>().unwrap();
+            let ifam_index = rdr.read_u16::<NativeEndian>().unwrap();
+            let _ifam_metric = rdr.read_u32::<NativeEndian>().unwrap();
+            for i in 0..RTAX_MAX {
+                if ifam_addrs & (1 << i) != 0 {
+                    let sa_len = rdr.read_u8().unwrap() as usize;
+                    rdr.set_position(rdr.position() - 1);
+                    let mut rti_info = vec![0u8; sa_len];
+                    rdr.read_exact(&mut rti_info).unwrap();
+                    println!("sockaddr: {:?}", &rti_info);
                 }
-                if ifam_addrs & RTA_IFP != 0 {
-
-                }
-                if ifam_addrs & RTA_IFA != 0 {
-                    
-                }
-            },
+            }
+            println!("NEWADDR: addrs: {}, flags: {:#x}, index: {}", ifam_addrs, ifam_flags, ifam_index);
+        },
         RTM_DELADDR => println!("DELADDR"),
         RTM_NEWMADDR => println!("NEW MADDR"),
         RTM_DELMADDR => println!("DEL MADDR"),
@@ -193,10 +204,8 @@ impl IfController {
                         RT_TOKEN => {
                             match self.raw.read(&mut buffer) {
                                 Ok(n) => {
-                                    let mut bytes = BytesMut::from(buffer.as_ref());
-                                    bytes.truncate(n);
-                                    println!("received");
-                                    rtsock_parse(&mut bytes);
+                                    println!("received {} bytes", n);
+                                    rtsock_parse(&buffer, n);
                                 },
                                 Err(e) => eprintln!("read rtsock: {}", e),
                             }

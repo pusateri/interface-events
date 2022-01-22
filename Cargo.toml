@@ -11,10 +11,10 @@ name = "interface_events"
 path = "src/lib.rs"
 
 [dependencies]
-libc = "0.2"
+libc = { git = "ssh://git@github.com/pusateri/libc.git" }
 nix = "0.23"
 crossbeam-channel = "0.5"
 ipnetwork = "0.18"
 socket2 = { version = "0.4.2", features = ["all"] }
 mio = { version = "0.8", features = ["os-ext", "net"] }
-bytes = "1.1"
+byteorder = "1"
