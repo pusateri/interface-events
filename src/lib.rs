@@ -1,5 +1,7 @@
 #![feature(ip)]
 #![feature(cursor_remaining)]
+#![feature(buf_read_has_data_left)]
+
 use std::io;
 use std::io::Cursor;
 use std::io::Read;
@@ -7,7 +9,8 @@ use std::thread;
 use socket2::{Domain, Socket, Type};
 use std::os::unix::io::AsRawFd;
 use libc::{AF_ROUTE, AF_INET, AF_INET6};
-use libc::{RTM_VERSION, RTM_ADD, RTM_DELETE, RTM_IFINFO, RTM_NEWADDR, RTM_DELADDR, RTM_NEWMADDR, RTM_DELMADDR};
+use libc::{RTM_VERSION, RTM_ADD, RTM_DELETE, RTM_IFINFO, RTM_NEWADDR, RTM_DELADDR,
+           RTM_NEWMADDR, RTM_DELMADDR, RTM_IFANNOUNCE};
 use libc::{RTA_NETMASK, RTA_IFP, RTA_IFA, RTAX_MAX};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use ipnetwork;
@@ -118,13 +121,26 @@ pub fn rtsock_parse(buf: &[u8], len: usize) {
 
     let rtm_type = rdr.read_u8().unwrap() as i32;
     match rtm_type {
-        RTM_ADD => println!("RTM_ADD"),
-        RTM_DELETE => println!("RTM_DELETE"),
+        RTM_ADD | RTM_DELETE => {
+            // struct rt_msghdr         - net/route.h
+            println!("RTM_ADD/RTM_DELETE");
+        },
         RTM_IFINFO => {
+            // struct if_msghdr         - net/if.h
             let ifm_addrs = rdr.read_u32::<NativeEndian>().unwrap();
             let ifm_flags = rdr.read_u32::<NativeEndian>().unwrap();
             let ifm_index = rdr.read_u16::<NativeEndian>().unwrap();
             let _ifm_spare1 = rdr.read_u16::<NativeEndian>().unwrap();
+            // struct if_data           - net/if.h
+            let _ifi_type = rdr.read_u8().unwrap();
+            let _ifi_physical = rdr.read_u8().unwrap();
+            let _ifi_addrlen = rdr.read_u8().unwrap();
+            let _ifi_hdrlen = rdr.read_u8().unwrap();
+            let ifi_link_state = rdr.read_u8().unwrap();
+            let _ifi_vhid = rdr.read_u8().unwrap();
+            let ifi_datalen = rdr.read_u16::<NativeEndian>().unwrap() as usize;
+            let mut ifdata = vec![0u8; ifi_datalen - 8];
+            rdr.read_exact(&mut ifdata).unwrap();
             for i in 0..RTAX_MAX {
                 if ifm_addrs & (1 << i) != 0 {
                     let sa_len = rdr.read_u8().unwrap() as usize;
@@ -134,27 +150,36 @@ pub fn rtsock_parse(buf: &[u8], len: usize) {
                     println!("sockaddr: {:?}", &rti_info);
                 }
             }
-            println!("IFINFO: addrs: {}, flags: {:#x}, index: {}, empty: {:?}", ifm_addrs, ifm_flags, ifm_index, rdr.is_empty());
+            println!("IFINFO: addrs: {:#x}, flags: {:#x}, index: {}, linkstate: {}, datalen: {}, position: {:?}",
+                     ifm_addrs, ifm_flags, ifm_index, ifi_link_state, ifi_datalen, rdr.position());
         },
-        RTM_NEWADDR => {
+        RTM_IFANNOUNCE => {
+            // struct if_announcemsghdr - net/if.h
+            println!("IFANNOUNCE");
+        },
+        RTM_NEWADDR | RTM_DELADDR => {
+            // struct ifa_msghdr        - net/if.h
             let ifam_addrs = rdr.read_u32::<NativeEndian>().unwrap();
             let ifam_flags = rdr.read_u32::<NativeEndian>().unwrap();
             let ifam_index = rdr.read_u16::<NativeEndian>().unwrap();
-            let _ifam_metric = rdr.read_u32::<NativeEndian>().unwrap();
+            let _ifam_spare1 = rdr.read_u16::<NativeEndian>().unwrap(); // FreeBSD but not MacOS
+            let ifam_metric = rdr.read_u32::<NativeEndian>().unwrap();
             for i in 0..RTAX_MAX {
                 if ifam_addrs & (1 << i) != 0 {
                     let sa_len = rdr.read_u8().unwrap() as usize;
                     rdr.set_position(rdr.position() - 1);
                     let mut rti_info = vec![0u8; sa_len];
                     rdr.read_exact(&mut rti_info).unwrap();
-                    println!("sockaddr: {:?}", &rti_info);
+                    println!("sockaddr {:#x}: {:?}", 1 << i, &rti_info);
                 }
             }
-            println!("NEWADDR: addrs: {}, flags: {:#x}, index: {}", ifam_addrs, ifam_flags, ifam_index);
+            println!("NEWADDR/DELADDR: addrs: {:#x}, flags: {:#x}, index: {}, metric: {}, position: {:?}",
+                     ifam_addrs, ifam_flags, ifam_index, ifam_metric, rdr.position());
         },
-        RTM_DELADDR => println!("DELADDR"),
-        RTM_NEWMADDR => println!("NEW MADDR"),
-        RTM_DELMADDR => println!("DEL MADDR"),
+        RTM_NEWMADDR | RTM_DELMADDR => {
+            // struct ifma_msghdr       - net/if.h
+            println!("NEW MADDR/DEL MADDR");
+        },
         _ => println!("RTM TYPE: {}", rtm_type),
     };
 }
