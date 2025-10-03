@@ -1,17 +1,13 @@
-#![feature(ip)]
-#![feature(cursor_remaining)]
-#![feature(buf_read_has_data_left)]
-
 use std::io;
 use std::io::Cursor;
 use std::io::Read;
 use std::thread;
 use socket2::{Domain, Socket, Type};
 use std::os::unix::io::AsRawFd;
-use libc::{AF_ROUTE, AF_INET, AF_INET6};
+use libc::AF_ROUTE;
 use libc::{RTM_VERSION, RTM_ADD, RTM_DELETE, RTM_IFINFO, RTM_NEWADDR, RTM_DELADDR,
            RTM_NEWMADDR, RTM_DELMADDR, RTM_IFANNOUNCE};
-use libc::{RTA_NETMASK, RTA_IFP, RTA_IFA, RTAX_MAX};
+use libc::RTAX_MAX;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use ipnetwork;
 use nix::ifaddrs;

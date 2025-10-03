@@ -1,14 +1,24 @@
 use nix::sys::socket;
+use nix::sys::socket::SockaddrLike;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-pub fn sockaddr_to_ipaddr(sockaddr: socket::SockAddr) -> Option<IpAddr> {
-    match sockaddr {
-        socket::SockAddr::Inet(addr) => match addr.ip() {
-            socket::IpAddr::V4(ip4) => Some(IpAddr::V4(ip4.to_std())),
-            socket::IpAddr::V6(ip6) => Some(IpAddr::V6(ip6.to_std())),
-        },
-        _ => None,
+pub fn sockaddr_to_ipaddr(sockaddr: socket::SockaddrStorage) -> Option<IpAddr> {
+    if let Some(family) = sockaddr.family() {
+        match family {
+            socket::AddressFamily::Inet => {
+                if let Some(inaddr) = sockaddr.as_sockaddr_in() {
+                    return Some(IpAddr::V4(inaddr.ip()))
+                }
+            },
+            socket::AddressFamily::Inet6 => {
+                if let Some(in6addr) = sockaddr.as_sockaddr_in6() {
+                    return Some(IpAddr::V6(in6addr.ip()))
+                }
+            }
+            _ => return None
+        }
     }
+    return None
 }
 
 pub fn mask_address(address: IpAddr, netmask: IpAddr) -> Option<IpAddr> {
