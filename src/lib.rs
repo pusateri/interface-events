@@ -1,6 +1,5 @@
 use byteorder::{NativeEndian, ReadBytesExt};
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use ipnetwork;
 use libc::AF_ROUTE;
 use libc::RTAX_MAX;
 use libc::{
@@ -197,19 +196,24 @@ pub fn rtsock_parse(buf: &[u8], len: usize) {
     };
 }
 
+impl Default for IfController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IfController {
     pub fn new() -> Self {
         let sock =
             Socket::new_raw(Domain::from(AF_ROUTE), Type::RAW, None).expect("raw routing socket");
         sock.set_nonblocking(true).expect("nonblocking Error");
         let (s, r) = unbounded::<IfEvent>();
-        let controller = IfController {
+        IfController {
             tx: s,
             rx: r,
             raw: sock,
             running: false,
-        };
-        controller
+        }
     }
 
     /// subscribe to future interfaces events
@@ -240,15 +244,14 @@ impl IfController {
             loop {
                 poll.poll(&mut events, None).expect("poll.poll failed");
                 for event in events.iter() {
-                    match event.token() {
-                        RT_TOKEN => match self.raw.read(&mut buffer) {
+                    if event.token() == RT_TOKEN {
+                        match self.raw.read(&mut buffer) {
                             Ok(n) => {
                                 println!("received {} bytes", n);
                                 rtsock_parse(&buffer, n);
                             }
                             Err(e) => eprintln!("read rtsock: {}", e),
-                        },
-                        _ => (),
+                        }
                     }
                 }
             }

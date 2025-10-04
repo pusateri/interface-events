@@ -18,7 +18,7 @@ pub fn sockaddr_to_ipaddr(sockaddr: socket::SockaddrStorage) -> Option<IpAddr> {
             _ => return None,
         }
     }
-    return None;
+    None
 }
 
 pub fn mask_address(address: IpAddr, netmask: IpAddr) -> Option<IpAddr> {
