@@ -309,8 +309,8 @@ pub fn get_current_events() -> Vec<IfEvent> {
 fn catchup(tx: &Sender<IfEvent>) {
     let events = get_current_events()
         .into_iter()
-        .filter(|event| IfEvent::not_link_local(event))
-        .filter(|event| IfEvent::not_loopback(event));
+        .filter(IfEvent::not_link_local)
+        .filter(IfEvent::not_loopback);
     for event in events {
         tx.send(event).unwrap();
     }
