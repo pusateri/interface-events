@@ -7,18 +7,18 @@ pub fn sockaddr_to_ipaddr(sockaddr: socket::SockaddrStorage) -> Option<IpAddr> {
         match family {
             socket::AddressFamily::Inet => {
                 if let Some(inaddr) = sockaddr.as_sockaddr_in() {
-                    return Some(IpAddr::V4(inaddr.ip()))
-                }
-            },
-            socket::AddressFamily::Inet6 => {
-                if let Some(in6addr) = sockaddr.as_sockaddr_in6() {
-                    return Some(IpAddr::V6(in6addr.ip()))
+                    return Some(IpAddr::V4(inaddr.ip()));
                 }
             }
-            _ => return None
+            socket::AddressFamily::Inet6 => {
+                if let Some(in6addr) = sockaddr.as_sockaddr_in6() {
+                    return Some(IpAddr::V6(in6addr.ip()));
+                }
+            }
+            _ => return None,
         }
     }
-    return None
+    return None;
 }
 
 pub fn mask_address(address: IpAddr, netmask: IpAddr) -> Option<IpAddr> {

@@ -1,22 +1,24 @@
+use byteorder::{NativeEndian, ReadBytesExt};
+use crossbeam_channel::{Receiver, Sender, unbounded};
+use ipnetwork;
+use libc::AF_ROUTE;
+use libc::RTAX_MAX;
+use libc::{
+    RTM_ADD, RTM_DELADDR, RTM_DELETE, RTM_DELMADDR, RTM_IFANNOUNCE, RTM_IFINFO, RTM_NEWADDR,
+    RTM_NEWMADDR, RTM_VERSION,
+};
+use mio::event::Source;
+use mio::unix::SourceFd;
+use mio::{Events, Interest, Poll, Registry, Token};
+use nix::ifaddrs;
+use nix::net::if_::*;
+use socket2::{Domain, Socket, Type};
 use std::io;
 use std::io::Cursor;
 use std::io::Read;
-use std::thread;
-use socket2::{Domain, Socket, Type};
-use std::os::unix::io::AsRawFd;
-use libc::AF_ROUTE;
-use libc::{RTM_VERSION, RTM_ADD, RTM_DELETE, RTM_IFINFO, RTM_NEWADDR, RTM_DELADDR,
-           RTM_NEWMADDR, RTM_DELMADDR, RTM_IFANNOUNCE};
-use libc::RTAX_MAX;
-use crossbeam_channel::{unbounded, Receiver, Sender};
-use ipnetwork;
-use nix::ifaddrs;
-use nix::net::if_::*;
 use std::net::IpAddr;
-use mio::event::Source;
-use mio::unix::SourceFd;
-use mio::{Events, Interest, Registry, Poll, Token};
-use byteorder::{NativeEndian, ReadBytesExt};
+use std::os::unix::io::AsRawFd;
+use std::thread;
 
 mod addrs;
 
@@ -60,27 +62,26 @@ impl IfEvent {
     }
 
     pub fn not_loopback(ifev: &IfEvent) -> bool {
-		!ifev.ifflags.contains(InterfaceFlags::IFF_LOOPBACK)
-	}
+        !ifev.ifflags.contains(InterfaceFlags::IFF_LOOPBACK)
+    }
 
-	pub fn not_link_local(ifev: &IfEvent) -> bool {
-		match ifev.ip {
+    pub fn not_link_local(ifev: &IfEvent) -> bool {
+        match ifev.ip {
             IpAddr::V4(ip4) => !ip4.is_link_local(),
             IpAddr::V6(ip6) => !ip6.is_unicast_link_local(),
         }
-	}
-    pub fn from_ifaddr(ifaddr: &ifaddrs::InterfaceAddress) -> Option<IfEvent>
-    {
+    }
+    pub fn from_ifaddr(ifaddr: &ifaddrs::InterfaceAddress) -> Option<IfEvent> {
         let (ip, ipnet, plen) = match ifaddr_to_prefix(ifaddr.clone()) {
-                Some((ip, ipnet, plen)) => (ip, ipnet, plen),
-                None => return None,
+            Some((ip, ipnet, plen)) => (ip, ipnet, plen),
+            None => return None,
         };
         let if_index = match if_nametoindex(&ifaddr.interface_name[..]) {
             Ok(idx) => idx,
             Err(e) => {
                 eprintln!("if_nametoindex: {}", e);
                 return None;
-            },
+            }
         };
         Some(IfEvent::new(
             IfAction::NEWADDR,
@@ -96,8 +97,8 @@ impl IfEvent {
 
 #[derive(Debug)]
 pub struct IfController {
-	tx: Sender<IfEvent>,
-	rx: Receiver<IfEvent>,
+    tx: Sender<IfEvent>,
+    rx: Receiver<IfEvent>,
     raw: Socket,
     running: bool,
 }
@@ -111,7 +112,10 @@ pub fn rtsock_parse(buf: &[u8], len: usize) {
     }
     let rtm_version = rdr.read_u8().unwrap() as i32;
     if rtm_version != RTM_VERSION {
-        eprintln!("rtsock unsupported version expected {}, got {}", RTM_VERSION, rtm_version);
+        eprintln!(
+            "rtsock unsupported version expected {}, got {}",
+            RTM_VERSION, rtm_version
+        );
         return;
     }
 
@@ -120,7 +124,7 @@ pub fn rtsock_parse(buf: &[u8], len: usize) {
         RTM_ADD | RTM_DELETE => {
             // struct rt_msghdr         - net/route.h
             println!("RTM_ADD/RTM_DELETE");
-        },
+        }
         RTM_IFINFO => {
             // struct if_msghdr         - net/if.h
             let ifm_addrs = rdr.read_u32::<NativeEndian>().unwrap();
@@ -146,13 +150,20 @@ pub fn rtsock_parse(buf: &[u8], len: usize) {
                     println!("sockaddr: {:?}", &rti_info);
                 }
             }
-            println!("IFINFO: addrs: {:#x}, flags: {:#x}, index: {}, linkstate: {}, datalen: {}, position: {:?}",
-                     ifm_addrs, ifm_flags, ifm_index, ifi_link_state, ifi_datalen, rdr.position());
-        },
+            println!(
+                "IFINFO: addrs: {:#x}, flags: {:#x}, index: {}, linkstate: {}, datalen: {}, position: {:?}",
+                ifm_addrs,
+                ifm_flags,
+                ifm_index,
+                ifi_link_state,
+                ifi_datalen,
+                rdr.position()
+            );
+        }
         RTM_IFANNOUNCE => {
             // struct if_announcemsghdr - net/if.h
             println!("IFANNOUNCE");
-        },
+        }
         RTM_NEWADDR | RTM_DELADDR => {
             // struct ifa_msghdr        - net/if.h
             let ifam_addrs = rdr.read_u32::<NativeEndian>().unwrap();
@@ -169,47 +180,53 @@ pub fn rtsock_parse(buf: &[u8], len: usize) {
                     println!("sockaddr {:#x}: {:?}", 1 << i, &rti_info);
                 }
             }
-            println!("NEWADDR/DELADDR: addrs: {:#x}, flags: {:#x}, index: {}, metric: {}, position: {:?}",
-                     ifam_addrs, ifam_flags, ifam_index, ifam_metric, rdr.position());
-        },
+            println!(
+                "NEWADDR/DELADDR: addrs: {:#x}, flags: {:#x}, index: {}, metric: {}, position: {:?}",
+                ifam_addrs,
+                ifam_flags,
+                ifam_index,
+                ifam_metric,
+                rdr.position()
+            );
+        }
         RTM_NEWMADDR | RTM_DELMADDR => {
             // struct ifma_msghdr       - net/if.h
             println!("NEW MADDR/DEL MADDR");
-        },
+        }
         _ => println!("RTM TYPE: {}", rtm_type),
     };
 }
 
 impl IfController {
-	pub fn new() -> Self {
-        let sock = Socket::new_raw(Domain::from(AF_ROUTE), Type::RAW, None).expect("raw routing socket");
+    pub fn new() -> Self {
+        let sock =
+            Socket::new_raw(Domain::from(AF_ROUTE), Type::RAW, None).expect("raw routing socket");
         sock.set_nonblocking(true).expect("nonblocking Error");
-		let (s, r) = unbounded::<IfEvent>();
-		let controller = IfController {
-			tx: s,
-			rx: r,
+        let (s, r) = unbounded::<IfEvent>();
+        let controller = IfController {
+            tx: s,
+            rx: r,
             raw: sock,
             running: false,
-		};
-		controller
-	}
+        };
+        controller
+    }
 
-	/// subscribe to future interfaces events
-	pub fn subscribe(self) -> Receiver<IfEvent> {
+    /// subscribe to future interfaces events
+    pub fn subscribe(self) -> Receiver<IfEvent> {
         let rx = self.rx.clone();
         catchup(&self.tx);
         if !self.running {
             self.run();
         }
-		rx
-	}
+        rx
+    }
 
-	/// unsubscribe to future interfaces events
-	pub fn unsubscribe(self, r: Receiver<IfEvent>) {
-		drop(r);
-	}
+    /// unsubscribe to future interfaces events
+    pub fn unsubscribe(self, r: Receiver<IfEvent>) {
+        drop(r);
+    }
 
-    
     fn run(mut self) {
         self.running = true;
         thread::spawn(move || {
@@ -217,19 +234,19 @@ impl IfController {
             let mut events = Events::with_capacity(1024);
             let mut poll = Poll::new().expect("Poll::new() failed");
             let mut buffer = [0u8; 1024];
-            poll.registry().register(&mut self, RT_TOKEN, Interest::READABLE).expect("poll.register failed");
+            poll.registry()
+                .register(&mut self, RT_TOKEN, Interest::READABLE)
+                .expect("poll.register failed");
             loop {
                 poll.poll(&mut events, None).expect("poll.poll failed");
                 for event in events.iter() {
                     match event.token() {
-                        RT_TOKEN => {
-                            match self.raw.read(&mut buffer) {
-                                Ok(n) => {
-                                    println!("received {} bytes", n);
-                                    rtsock_parse(&buffer, n);
-                                },
-                                Err(e) => eprintln!("read rtsock: {}", e),
+                        RT_TOKEN => match self.raw.read(&mut buffer) {
+                            Ok(n) => {
+                                println!("received {} bytes", n);
+                                rtsock_parse(&buffer, n);
                             }
+                            Err(e) => eprintln!("read rtsock: {}", e),
                         },
                         _ => (),
                     }
@@ -240,20 +257,25 @@ impl IfController {
 }
 
 impl Source for IfController {
-    fn register(&mut self, registry: &Registry, token: Token, interests: Interest)
-        -> io::Result<()>
-    {
+    fn register(
+        &mut self,
+        registry: &Registry,
+        token: Token,
+        interests: Interest,
+    ) -> io::Result<()> {
         SourceFd(&self.raw.as_raw_fd()).register(registry, token, interests)
     }
 
-    fn reregister(&mut self, registry: &Registry, token: Token, interests: Interest)
-        -> io::Result<()>
-    {
+    fn reregister(
+        &mut self,
+        registry: &Registry,
+        token: Token,
+        interests: Interest,
+    ) -> io::Result<()> {
         SourceFd(&self.raw.as_raw_fd()).reregister(registry, token, interests)
     }
 
-    fn deregister(&mut self, registry: &Registry) -> io::Result<()>
-    {
+    fn deregister(&mut self, registry: &Registry) -> io::Result<()> {
         SourceFd(&self.raw.as_raw_fd()).deregister(registry)
     }
 }
@@ -294,16 +316,16 @@ fn catchup(tx: &Sender<IfEvent>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-/*
-    #[test]
-    fn active() {
-        let events = get_current_events()
-            .into_iter()
-            .filter(|event| IfEvent::not_link_local(event))
-            .filter(|event| IfEvent::not_loopback(event));
-        assert!(events.count() > 0);
-    }
-*/
+    /*
+        #[test]
+        fn active() {
+            let events = get_current_events()
+                .into_iter()
+                .filter(|event| IfEvent::not_link_local(event))
+                .filter(|event| IfEvent::not_loopback(event));
+            assert!(events.count() > 0);
+        }
+    */
     #[test]
     fn subscribe_test() {
         let ifc = IfController::new();
