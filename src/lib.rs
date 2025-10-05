@@ -120,10 +120,14 @@ pub fn rtsock_parse(buf: &[u8], len: usize) {
 
     let rtm_type = rdr.read_u8().unwrap() as i32;
     match rtm_type {
-        RTM_ADD | RTM_DELETE => {
+        RTM_ADD => {
             // struct rt_msghdr         - net/route.h
-            println!("RTM_ADD/RTM_DELETE");
-        }
+            println!("RTM_ADD");
+        },
+        RTM_DELETE => {
+            // struct rt_msghdr         - net/route.h
+            println!("RTM_DELETE");
+        },
         RTM_IFINFO => {
             // struct if_msghdr         - net/if.h
             let ifm_addrs = rdr.read_u32::<NativeEndian>().unwrap();
@@ -158,11 +162,11 @@ pub fn rtsock_parse(buf: &[u8], len: usize) {
                 ifi_datalen,
                 rdr.position()
             );
-        }
+        },
         RTM_IFANNOUNCE => {
             // struct if_announcemsghdr - net/if.h
             println!("IFANNOUNCE");
-        }
+        },
         RTM_NEWADDR | RTM_DELADDR => {
             // struct ifa_msghdr        - net/if.h
             let ifam_addrs = rdr.read_u32::<NativeEndian>().unwrap();
@@ -187,11 +191,11 @@ pub fn rtsock_parse(buf: &[u8], len: usize) {
                 ifam_metric,
                 rdr.position()
             );
-        }
+        },
         RTM_NEWMADDR | RTM_DELMADDR => {
             // struct ifma_msghdr       - net/if.h
             println!("NEW MADDR/DEL MADDR");
-        }
+        },
         _ => println!("RTM TYPE: {}", rtm_type),
     };
 }

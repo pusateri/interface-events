@@ -10,6 +10,10 @@ edition = "2024"
 name = "interface_events"
 path = "src/lib.rs"
 
+[[bin]]
+name = "monitor"
+path = "src/bin.rs"
+
 [dependencies]
 libc = "0.2"
 nix = { version="0.30", features = ["net", "socket"] }
